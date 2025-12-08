@@ -1,6 +1,11 @@
+"""
+Mesh builder: converts CityJSON geometry boundaries into Blender meshes.
+"""
+
 import bpy
 
 class Mesh:
+    """Builds a Blender mesh object from CityJSON geometry boundaries."""
 
     def __init__(self, object, vertices, oid):
         # entire data of the object

@@ -1,3 +1,8 @@
+"""
+CityJSON export pipeline used by the Blender operator.
+Collects scene data, validates, and writes CityJSON 2.0.
+"""
+
 import json
 import bpy
 import os
@@ -5,6 +10,7 @@ import shutil
 from .CityObject import ExportCityObject
 
 class ExportProcess:
+    """Handles CityJSON export from Blender objects to file."""
     
     def __init__(self, filepath, textureSetting):
         self.filepath = filepath

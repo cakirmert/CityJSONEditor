@@ -1,9 +1,14 @@
+"""
+Material helpers: create/assign semantics materials and textures during import/export.
+"""
+
 import bpy 
 import bmesh
 from .FeatureTypes import (FeatureTypes)
 import time
 
 class Material:
+    """Creates Blender materials reflecting CityJSON semantic surfaces and optional textures."""
 
     def __init__(self, type, newObject, objectID, textureSetting, objectType, surfaceIndex, surfaceValue, rawObjectData, filepath, geometry):
         # surface type eg. RoofSurface or WallSurface etc.

@@ -1,9 +1,13 @@
+"""
+CityDB bridge: Blender panel/operators to fetch/validate/push CityJSON via dockerized citydb-tool.
+CityJSON import/export logic remains in the CityJSONEditor core operators.
+"""
+
 import os
 import shlex
 import subprocess
 import shutil
 import tempfile
-import json
 from pathlib import Path
 from typing import List
 
@@ -15,6 +19,7 @@ from bpy.props import (
     StringProperty,
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup
+from .core.validation import validate_cityjson
 
 ADDON_ID = (__package__ or __name__).split(".")[0]
 
@@ -57,174 +62,6 @@ def _mask_password(cmd: List[str], password: str) -> str:
     return " ".join(shlex.quote(p) for p in masked)
 
 
-def _peek_file(path: Path, max_bytes: int = 256) -> str:
-    if not path.exists():
-        return "<missing>"
-    try:
-        with path.open("rb") as fh:
-            data = fh.read(max_bytes)
-        return data.decode("utf-8", errors="replace")
-    except Exception as exc:
-        return f"<unreadable: {exc}>"
-
-
-def _ensure_json_file(path: Path) -> tuple[bool, str]:
-    if not path.exists():
-        return False, f"File does not exist: {path}"
-    text = _peek_file(path)
-    stripped = text.lstrip()
-    if not stripped.startswith("{"):
-        hint = ""
-        if stripped.startswith("<"):
-            hint = " Looks like XML/GML; export must be CityJSON."
-        return False, f"File is not JSON (first bytes: {text[:60]!r}) at {path}.{hint}"
-    return True, ""
-
-
-def _validate_cityjson(path: Path) -> tuple[bool, str]:
-    ok, msg = _ensure_json_file(path)
-    if not ok:
-        return ok, msg
-    try:
-        import json
-        with path.open("r", encoding="utf-8") as fh:
-            json.load(fh)
-    except json.JSONDecodeError as exc:
-        prefix = _peek_file(path, max_bytes=512)
-        # Try to recover from multiple JSON objects (CityJSON + CityJSONFeature) on separate lines.
-        merged = _try_merge_cityjson_lines(path)
-        if merged is True:
-            return True, ""
-        hint = ""
-        if prefix.lstrip().startswith("<"):
-            hint = " Detected XML/GML; ensure you exported CityJSON, not CityGML."
-        return (
-            False,
-            f"Invalid CityJSON ({path}): {exc.msg} at line {exc.lineno} col {exc.colno}. "
-            f"{hint}Preview: {prefix[:120]!r}",
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"Could not read CityJSON ({path}): {exc}"
-    return True, ""
-
-
-def _try_merge_cityjson_lines(path: Path) -> bool:
-    """
-    Some exports yield CityJSON Text Sequence (one JSON object per line): a base CityJSON plus CityJSONFeature.
-    Merge them into a single CityJSON file if possible. Return True if rewritten.
-    """
-    import json
-
-    try:
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except Exception:
-        return False
-    if len(lines) < 2:
-        return False
-    objs = []
-    for ln in lines:
-        try:
-            objs.append(json.loads(ln))
-        except Exception:
-            return False
-    base = objs[0]
-    features = objs[1:]
-    if base.get("type") != "CityJSON":
-        return False
-    combined_cityobjects = base.get("CityObjects", {}) or {}
-    vertices = base.get("vertices", []) or []
-    transform = base.get("transform")
-    metadata = base.get("metadata", {})
-
-    for feat in features:
-        if feat.get("type") not in ("CityJSONFeature", "CityJSONFeatureCollection"):
-            continue
-        if "CityObjects" in feat:
-            combined_cityobjects.update(feat["CityObjects"])
-        if "vertices" in feat and not vertices:
-            vertices = feat["vertices"]
-        if "transform" in feat and not transform:
-            transform = feat["transform"]
-        if "metadata" in feat:
-            metadata = {**metadata, **feat["metadata"]}
-
-    merged = {
-        "type": "CityJSON",
-        "version": base.get("version", "2.0"),
-        "CityObjects": combined_cityobjects,
-        "vertices": vertices,
-    }
-    if transform:
-        merged["transform"] = transform
-    if metadata:
-        merged["metadata"] = metadata
-
-    try:
-        path.write_text(json.dumps(merged), encoding="utf-8")
-        return True
-    except Exception:
-        return False
-
-
-def _load_cityjson(path: Path) -> tuple[bool, str, dict | None]:
-    ok, msg = _validate_cityjson(path)
-    if not ok:
-        return False, msg, None
-    import json
-
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return True, "", data
-    except Exception as exc:
-        return False, f"Could not parse CityJSON after validation: {exc}", None
-
-
-def _normalize_cityjson_lods(data: dict, default_lod: float | None = 0.0) -> bool:
-    """
-    Normalize geometry 'lod' fields to numeric values because CityJSONEditor expects numbers, not strings.
-    Returns True if any change was made.
-    """
-    changed = False
-    cityobjects = data.get("CityObjects", {}) or {}
-    for obj in cityobjects.values():
-        geoms = obj.get("geometry") or []
-        for geom in geoms:
-            lod_val = geom.get("lod")
-            if isinstance(lod_val, str):
-                try:
-                    geom["lod"] = float(lod_val)
-                    changed = True
-                except ValueError:
-                    if default_lod is not None:
-                        geom["lod"] = float(default_lod)
-                        changed = True
-            elif lod_val is None and default_lod is not None:
-                geom["lod"] = float(default_lod)
-                changed = True
-    return changed
-
-
-def _check_semantics(data: dict) -> tuple[bool, str]:
-    """
-    Ensure semantics arrays exist and are consistent; do not auto-fix so issues surface to the user.
-    """
-    cityobjects = data.get("CityObjects", {}) or {}
-    for co_id, obj in cityobjects.items():
-        geoms = obj.get("geometry") or []
-        for geom in geoms:
-            semantics = geom.get("semantics")
-            if not isinstance(semantics, dict):
-                return False, f"Missing semantics for geometry in CityObject '{co_id}'."
-            values = semantics.get("values")
-            surfaces = semantics.get("surfaces")
-            if not values or not isinstance(values, list) or not values[0]:
-                return False, f"Semantics values missing/empty for CityObject '{co_id}'."
-            if not surfaces:
-                return False, f"Semantics surfaces missing for CityObject '{co_id}'."
-    return True, ""
-
-
 def _ensure_semantic_materials(context) -> None:
     """
     CityJSONEditor expects a material with 'CJEOtype' per mesh to derive semantics.
@@ -249,23 +86,6 @@ def _ensure_semantic_materials(context) -> None:
         for poly in mesh.polygons:
             if poly.material_index >= len(mesh.materials):
                 poly.material_index = 0
-
-
-def _strip_textures(data: dict) -> bool:
-    changed = False
-    # Remove top-level appearance/materials/themes to avoid texture handling
-    for key in ["appearance", "appearances", "materials", "textures"]:
-        if key in data:
-            del data[key]
-            changed = True
-    cityobjects = data.get("CityObjects", {}) or {}
-    for obj in cityobjects.values():
-        geoms = obj.get("geometry") or []
-        for geom in geoms:
-            if geom.get("texture") != {}:
-                geom["texture"] = {}
-                changed = True
-    return changed
 
 
 def _ensure_gmlid_props(context, data: dict) -> None:
@@ -404,32 +224,6 @@ def _has_texture_data(data: dict) -> bool:
             if geom.get("texture"):
                 return True
     return False
-
-
-def _prepare_cityjson_for_import(local_file: Path, settings) -> tuple[bool, str, dict | None]:
-    ok, msg, data = _load_cityjson(local_file)
-    if not ok:
-        return False, msg, None
-    changed = False
-    if _normalize_cityjson_lods(data):
-        changed = True
-    ok, sem_msg = _check_semantics(data)
-    if not ok:
-        return False, sem_msg, None
-    if not settings.import_textures and _strip_textures(data):
-        changed = True
-    # Ensure every geometry has a texture key, even if empty
-    cityobjects = data.get("CityObjects", {}) or {}
-    for obj in cityobjects.values():
-        geoms = obj.get("geometry") or []
-        for geom in geoms:
-            if "texture" not in geom:
-                geom["texture"] = {}
-                changed = True
-    if changed:
-        import json as _json
-        local_file.write_text(_json.dumps(data), encoding="utf-8")
-    return True, "", data
 
 
 def _require_cityjson_editor() -> bool:
@@ -956,9 +750,9 @@ class CITYDB_OT_FetchFromDB(Operator):
                 wm.progress_end()
             return {"CANCELLED"}
 
-        ok, msg, data = _prepare_cityjson_for_import(local_file, settings)
+        ok, msg, data = validate_cityjson(local_file)
         if not ok:
-            settings.last_message = f"CityJSON file check failed: {msg}"
+            settings.last_message = f"CityJSON file validation failed: {msg}"
             self.report({"ERROR"}, settings.last_message)
             if wm:
                 wm.progress_end()
@@ -987,7 +781,7 @@ class CITYDB_OT_FetchFromDB(Operator):
                     if wm:
                         wm.progress_end()
                     return {"CANCELLED"}
-                ok, msg, data = _prepare_cityjson_for_import(local_file, settings)
+                ok, msg, data = validate_cityjson(local_file)
                 if not ok or not data.get("CityObjects"):
                     settings.last_message = (
                         f"Overview fetch returned empty even after fallback LoDs ({fallback_lods}). {msg}"
@@ -1066,9 +860,9 @@ class CITYDB_OT_FetchHighForSelection(Operator):
             self.report({"ERROR"}, settings.last_message)
             return {"CANCELLED"}
 
-        ok, msg, data = _prepare_cityjson_for_import(local_file, settings)
+        ok, msg, data = validate_cityjson(local_file)
         if not ok:
-            settings.last_message = f"CityJSON file check failed: {msg}"
+            settings.last_message = f"CityJSON file validation failed: {msg}"
             self.report({"ERROR"}, settings.last_message)
             return {"CANCELLED"}
         val_ok, val_msg = _validate_with_cjio(local_file)

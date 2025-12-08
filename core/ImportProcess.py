@@ -1,9 +1,16 @@
-import json
+"""
+CityJSON import pipeline used by the Blender operator.
+Runs validation/prep, sets world transforms, and constructs Blender meshes/objects.
+"""
+
 import bpy
 from .CityObject import ImportCityObject, ExportCityObject
 import time
+from pathlib import Path
+from .validation import prepare_cityjson_for_import
 
 class ImportProcess:
+    """Handles reading/preparing CityJSON and instantiating Blender objects."""
 
     def __init__(self, filepath, textureSetting):
         # File to be imported
@@ -22,11 +29,6 @@ class ImportProcess:
         self.textureSetting = textureSetting
         # vertices before scaling
         self.unScaledVertices = []
-
-    def load_data(self):
-        # load contents of file 
-        with open(self.filepath) as json_file:
-            self.data = json.load(json_file)
 
     def getTransformationParameters(self):
 
@@ -147,11 +149,14 @@ class ImportProcess:
         print('##########################')
         print('### STARTING IMPORT... ###')
         print('##########################')
-        
+
         # clean up unused objects
         bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=False, do_recursive=True)
 
-        self.load_data()
+        ok, msg, data = prepare_cityjson_for_import(Path(self.filepath), self.textureSetting)
+        if not ok:
+            raise RuntimeError(f"CityJSON validation failed: {msg}")
+        self.data = data
         self.getTransformationParameters()
         self.scaleVertexCoordinates()
         status = self.checkImport()

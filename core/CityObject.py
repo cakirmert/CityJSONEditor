@@ -1,3 +1,7 @@
+"""
+CityObject import/export helpers: build Blender meshes from CityJSON and serialize back.
+"""
+
 import bpy
 import numpy
 import math
@@ -6,6 +10,7 @@ from .Material import Material
 import time
 
 class ImportCityObject:
+    """Create Blender mesh/object instances from a CityJSON CityObject."""
 
     def __init__(self, object, vertices, objID, textureSetting, rawObjectData, filepath):
         # entire data of the object
@@ -189,6 +194,7 @@ class ImportCityObject:
         else: pass
 
 class ExportCityObject:
+    """Serialize a Blender object back into a CityJSON CityObject."""
     def __init__(self, object, lastVertexIndex, jsonExport, textureSetting, textureReferenceList):
         self.object = object
         # all vertices of the current object

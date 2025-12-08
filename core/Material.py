@@ -68,6 +68,13 @@ class Material:
         
     def setTexture(self):
         
+        if not hasattr(self, "appearances"):
+            self.setColor()
+            return
+        if 'texture' not in self.geometry:
+            self.setColor()
+            return
+        
         # list of all themes used in the object
         themeNames = list(self.geometry['texture'].keys())
         # name of the first theme, as this is the default for now
@@ -146,7 +153,10 @@ class Material:
         self.createMaterial()
         # use the corresponding function for the objects appearance according to the presence of a texture
         if self.textureSetting is True:
-            self.setTexture()
+            try:
+                self.setTexture()
+            except Exception:
+                self.setColor()
         else:
             self.setColor()
         # assign the materials to the individual faces

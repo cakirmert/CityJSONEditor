@@ -37,10 +37,13 @@ class ImportProcess:
         except:
             # if it does not exist, create it
             print('The files does not have the transform property, therefore it will now be created and applied to all vertices!')
-            # calc trsanlate matrix
-            bboxXmin = self.data['metadata']['geographicalExtent'][0]
-            bboxYmin = self.data['metadata']['geographicalExtent'][1]
-            bboxZmin = min([self.data['metadata']['geographicalExtent'][2], self.data['metadata']['geographicalExtent'][5]])
+            bbox = (self.data.get('metadata') or {}).get('geographicalExtent')
+            if bbox and len(bbox) >= 6:
+                bboxXmin = bbox[0]
+                bboxYmin = bbox[1]
+                bboxZmin = min([bbox[2], bbox[5]])
+            else:
+                bboxXmin = bboxYmin = bboxZmin = 0
             translate = [bboxXmin, bboxYmin, bboxZmin]
             self.worldOrigin = translate 
             # scale factor is 1 since the values are in meters (with decimals)
@@ -48,7 +51,7 @@ class ImportProcess:
             self.scaleParam = scale
             
             # apply transform values to all vertices
-            for vertex in self.data['vertices']:
+            for vertex in self.data.get('vertices', []):
                 x = vertex[0]-bboxXmin
                 y = vertex[1]-bboxYmin
                 z = vertex[2]-bboxZmin
@@ -122,7 +125,8 @@ class ImportProcess:
             return False
 
     def createWorldProperties(self):
-        bpy.context.scene.world['CRS'] = self.data['metadata']['referenceSystem']
+        metadata = self.data.get('metadata') or {}
+        bpy.context.scene.world['CRS'] = metadata.get('referenceSystem', 'undefined')
         bpy.context.scene.world['X_Origin'] = self.worldOrigin[0]
         bpy.context.scene.world['Y_Origin'] = self.worldOrigin[1]
         bpy.context.scene.world['Z_Origin'] = self.worldOrigin[2]
@@ -130,7 +134,7 @@ class ImportProcess:
 
     def createCityObjects(self):
         # create the CityObjects with coresponding meshesS
-        cityobjects = self.data['CityObjects'] #variable is a dict
+        cityobjects = self.data.get('CityObjects') or {}
         for objID, object in cityobjects.items():
             print('Creating object: '+ objID)
             cityobj = ImportCityObject(object, self.vertices, objID, self.textureSetting, self.data, self.filepath)

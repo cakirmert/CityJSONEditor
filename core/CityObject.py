@@ -2,7 +2,7 @@ import bpy
 import numpy
 import math
 from .Mesh import Mesh
-from.Material import Material
+from .Material import Material
 import time
 
 class ImportCityObject:
@@ -25,7 +25,15 @@ class ImportCityObject:
         # type of the given object e.g. "Building" or "Bridge" etc.
         self.objectType = self.object['type']
         # LOD of the given object
-        self.objectLOD = math.floor(self.object['geometry'][0]['lod'])
+        geom_lod = None
+        try:
+            geoms = self.object.get("geometry") or []
+            if geoms:
+                lod_raw = geoms[0].get("lod")
+                geom_lod = float(lod_raw) if lod_raw is not None else None
+        except Exception:
+            geom_lod = None
+        self.objectLOD = math.floor(geom_lod) if geom_lod is not None else 0
         # entire Data of the file
         self.rawObjectData = rawObjectData
         # File to be imported
@@ -70,34 +78,67 @@ class ImportCityObject:
         collection.objects.link(newObj)
         return newObj
 
+    def _semantics_for_geometry(self, geom):
+        semantics = geom.get("semantics") if isinstance(geom, dict) else None
+        boundaries = geom.get("boundaries") or []
+        face_count = 0
+        if geom.get("type") == "Solid":
+            for shell in boundaries:
+                face_count += len(shell)
+        else:
+            face_count = len(boundaries)
+        if isinstance(semantics, dict):
+            values = semantics.get("values")
+            surfaces = semantics.get("surfaces")
+            if values and isinstance(values, list) and values and surfaces:
+                first = values[0]
+                if isinstance(first, list):
+                    if face_count == 0 or len(first) == face_count:
+                        return semantics
+        if face_count == 0:
+            return {"surfaces": [{"type": "WallSurface"}], "values": [[]]}
+        return {"surfaces": [{"type": "WallSurface"}], "values": [[0 for _ in range(face_count)]]}
+
 
     def createMaterials(self, newObject):
-        for geom in self.object['geometry']:
-            # only create surface semanrics if the object is a solid and NOT a GenericCityObject
-            if geom['type'] == 'Solid' and self.object['type']!='GenericCityObject':
-                l = len(geom['semantics']['values'][0])
-                # surfaceIndex --> the index in the "values"-array, which is the index of the surface
-                # surfaceValue --> the value of the surface, wich is a link to an entry in the "surfaces"-array
-                self.printProgressBar(0, l, prefix = 'Materials:', suffix = 'Complete', length = 50)
-                for surfaceIndex, surfaceValue in enumerate(geom['semantics']['values'][0]):
-                    time_mat = time.time()
-                    material = Material(geom['semantics']['surfaces'][surfaceValue]['type'], newObject, self.objectID, self.textureSetting, self.objectType, surfaceIndex, surfaceValue, self.rawObjectData, self.filepath, geom )
-                    material.execute()
-                    time_needed = time.time() - time_mat
-                    # Update Progress Bar
-                    self.printProgressBar(surfaceIndex+1 , l, prefix = 'Materials:', suffix = 'Complete', length = 50, time='t/m: %.4f sec' % (time_needed))
-            else:
-                print("The geometry in this file has the type 'MultiSurface'. \nOnly type 'Solid' is currentlly supported in this version.")
+        for geom in self.object.get('geometry', []):
+            if self.object['type']=='GenericCityObject':
+                continue
+            semantics = self._semantics_for_geometry(geom)
+            values = semantics.get("values", [[]])
+            surfaces = semantics.get("surfaces", [])
+            if not values or not isinstance(values, list) or not values[0]:
+                continue
+            face_values = values[0]
+            l = len(face_values)
+            self.printProgressBar(0, l, prefix = 'Materials:', suffix = 'Complete', length = 50)
+            for surfaceIndex, surfaceValue in enumerate(face_values):
+                time_mat = time.time()
+                surface_idx = surfaceValue if surfaceValue is not None else 0
+                surface_idx = surface_idx if surface_idx < len(surfaces) else 0
+                surface_type = surfaces[surface_idx].get("type", "WallSurface") if surfaces else "WallSurface"
+                material = Material(surface_type, newObject, self.objectID, self.textureSetting, self.objectType, surfaceIndex, surface_idx, self.rawObjectData, self.filepath, geom )
+                material.execute()
+                time_needed = time.time() - time_mat
+                # Update Progress Bar
+                self.printProgressBar(surfaceIndex+1 , l, prefix = 'Materials:', suffix = 'Complete', length = 50, time='t/m: %.4f sec' % (time_needed))
+            if not l:
+                print("No semantic values found for geometry; using defaults.")
             
     def uvMapping(self, object, data, geom):
 
-        # list of all themes used in the object
-        themeNames = list(geom['texture'].keys())
-        # name of the first theme, as this is the default for now
+        texture_block = geom.get("texture") or {}
+        if not texture_block or "appearance" not in data:
+            return
+        themeNames = list(texture_block.keys())
+        if not themeNames:
+            return
         themeName = themeNames[0]
 
         # uv coordinates from json file
-        uv_coords = data['appearance']['vertices-texture']
+        uv_coords = (data.get('appearance') or {}).get('vertices-texture')
+        if not uv_coords:
+            return
         # all data from the json file
         mesh_data = object.data
         # create a new uv layer
@@ -107,7 +148,10 @@ class ImportCityObject:
         mesh_data.uv_layers.active = uv_layer
 
         # iterate through faces
-        for face_index, face in enumerate(geom['texture'][themeName]['values'][0]):
+        values = (texture_block.get(themeName) or {}).get("values") or []
+        if not values or not values[0]:
+            return
+        for face_index, face in enumerate(values[0]):
             # if the face has a texture (texture reference is not none)
             if face != [[None]]:
                 # get the polygon/face from the newly created mesh
@@ -272,8 +316,7 @@ class ExportCityObject:
             self.counter =+ 1
 
     def createJSON(self):
-        self.json = {self.objID : {"geographicalExtent" : self.objGeoExtent}}
-        self.json[self.objID].update({"type": self.objType})
+        self.json = {self.objID : {"type": self.objType}}
         if self.objType == 'GenericCityObject':
             pass
         else:

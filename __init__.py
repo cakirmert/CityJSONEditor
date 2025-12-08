@@ -1,11 +1,11 @@
 # Addon Metadata
 bl_info = {
-    "name": "CityJSONEditor",
-    "author": "Konstantinos Mastorakis, Tim Balschmiter, Hagen Schoenkaese",
-    "version": (2, 1, 0),
+    "name": "CityJSONEditor Bridge",
+    "author": "Konstantinos Mastorakis, Tim Balschmiter, Hagen Schoenkaese, Mert Cakir",
+    "version": (2, 2, 0),
     "blender": (3, 5, 1),
-    "location": "File > Import > CityJSON (.json) || File > Export > CityJSON (.json)",
-    "description": "Visualize, edit and export 3D structures encoded in CityJSON format",
+    "location": "File > Import/Export > CityJSON (.json) || View3D > Sidebar > CityDB",
+    "description": "CityJSONEditor fork with integrated CityDB bridge for spec-compliant CityJSON import/export",
     "warning": "",
     "wiki_url": "",
     "category": "Import-Export",
@@ -15,6 +15,7 @@ import bpy
 from .core.ImportOperator import ImportCityJSON
 from .core.ExportOperator import ExportCityJSON
 from .core import EditMenu, ObjectMenu
+from . import bridge
 
 
 
@@ -77,15 +78,17 @@ def register():
     bpy.types.VIEW3D_MT_object_context_menu.append(objectmenu_func)
     # add menu to edit mode context menu
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(editmenu_func)
+    bridge.register()
     
     
 def unregister():
     """Unregisters the classes and functions of the addon"""
+    bridge.unregister()
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
-    bpy.types.VIEW3D_MT_object.append(objectmenu_func)
-    bpy.types.VIEW3D_MT_object_context_menu.append(objectmenu_func)
-    bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(editmenu_func)
+    bpy.types.VIEW3D_MT_object.remove(objectmenu_func)
+    bpy.types.VIEW3D_MT_object_context_menu.remove(objectmenu_func)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(editmenu_func)
     for cls in classes:
         bpy.utils.unregister_class(cls)
 

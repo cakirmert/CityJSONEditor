@@ -15,13 +15,31 @@ class Mesh:
 
     def extractVertexMapping(self):
         # create and store a list of the vertex mapping (faces)
-        for geom in self.object['geometry']:
-            if geom['type'] == 'Solid':
-                for shell in geom['boundaries']:
+        geometries = self.object.get('geometry', []) if isinstance(self.object, dict) else []
+        for geom in geometries:
+            boundaries = geom.get('boundaries') or []
+            gtype = geom.get('type')
+            if gtype == 'Solid':
+                for shell in boundaries:
                     for face in shell:
                         for side in face:
                             if side:
                                 self.vertexMaps.append(side)
+            elif gtype == 'MultiSurface':
+                for face in boundaries:
+                    for ring in face:
+                        if ring:
+                            self.vertexMaps.append(ring)
+            else:
+                for face in boundaries:
+                    if not face:
+                        continue
+                    if isinstance(face[0], list):
+                        for ring in face:
+                            if ring:
+                                self.vertexMaps.append(ring)
+                    else:
+                        self.vertexMaps.append(face)
     
     def createBlenderMesh(self):
         # vertices used for defining blender meshes

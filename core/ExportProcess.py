@@ -18,7 +18,7 @@ class ExportProcess:
         if self.textureSetting: 
             emptyJSON = {
                 "type": "CityJSON",
-                "version": "1.0",
+                "version": "2.0",
                 "CityObjects": {},
                 "transform":{
                     "scale":[
@@ -38,7 +38,7 @@ class ExportProcess:
         else: 
             emptyJSON = {
                 "type": "CityJSON",
-                "version": "1.0",
+                "version": "2.0",
                 "CityObjects": {},
                 "transform":{
                     "scale":[
@@ -54,15 +54,27 @@ class ExportProcess:
         self.jsonExport = emptyJSON
     
     def getMetadata(self):
-        self.jsonExport["metadata"].update({"referenceSystem" : str(bpy.context.scene.world['CRS'])})
+        crs = None
+        try:
+            crs = bpy.context.scene.world['CRS']
+        except Exception:
+            crs = None
+        if crs is not None:
+            self.jsonExport.setdefault("metadata", {}).update({"referenceSystem" : str(crs)})
 
     def getTransform(self):
-        self.jsonExport["transform"]["translate"].append(bpy.context.scene.world['X_Origin'])
-        self.jsonExport["transform"]["translate"].append(bpy.context.scene.world['Y_Origin'])
-        self.jsonExport["transform"]["translate"].append(bpy.context.scene.world['Z_Origin'])
+        try:
+            translate = [
+                bpy.context.scene.world['X_Origin'],
+                bpy.context.scene.world['Y_Origin'],
+                bpy.context.scene.world['Z_Origin'],
+            ]
+        except Exception:
+            translate = [0, 0, 0]
+        self.jsonExport["transform"]["translate"] = translate
 
     def getTextures(self):
-        allTextures = bpy.data.textures.data.images
+        allTextures = bpy.data.images
         for texture in allTextures:
             imageType = texture.file_format
             if imageType == 'TARGA':
@@ -90,9 +102,13 @@ class ExportProcess:
         meshes = bpy.data.meshes
        
         for mesh in meshes:
+            if not mesh.uv_layers:
+                continue
             uv_layer = mesh.uv_layers[0].data
             for polyIndex, poly  in enumerate(mesh.polygons):
                 semantic = poly.material_index
+                if semantic >= len(mesh.materials):
+                    continue
                 loopTotal = poly.loop_total
                 if len(mesh.materials[semantic].node_tree.nodes) > 2:
                     for loop_index in range(poly.loop_start, poly.loop_start + loopTotal):
@@ -145,6 +161,29 @@ class ExportProcess:
             filecontent = json.dumps(self.jsonExport)
             f.write(filecontent)
 
+    def updateMetadataExtent(self):
+        vertices = self.jsonExport.get("vertices") or []
+        if not vertices:
+            return
+        transform = self.jsonExport.get("transform") or {}
+        scale = transform.get("scale") or [1,1,1]
+        translate = transform.get("translate") or [0,0,0]
+        actual_coords = []
+        for v in vertices:
+            actual_coords.append([
+                v[0]*scale[0] + translate[0],
+                v[1]*scale[1] + translate[1],
+                v[2]*scale[2] + translate[2],
+            ])
+        if not actual_coords:
+            return
+        min_vals = [min(coord[i] for coord in actual_coords) for i in range(3)]
+        max_vals = [max(coord[i] for coord in actual_coords) for i in range(3)]
+        self.jsonExport.setdefault("metadata", {})["geographicalExtent"] = [
+            round(min_vals[0],3), round(min_vals[1],3), round(min_vals[2],3),
+            round(max_vals[0],3), round(max_vals[1],3), round(max_vals[2],3)
+        ]
+
     def execute(self):
         print('##########################')
         print('### STARTING EXPORT... ###')
@@ -157,6 +196,7 @@ class ExportProcess:
             self.getTextures()
             self.getVerticesTexture()
         self.createCityObject()
+        self.updateMetadataExtent()
         self.writeData()
 
         print('########################')

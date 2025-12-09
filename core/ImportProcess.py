@@ -149,6 +149,9 @@ class ImportProcess:
         bpy.context.scene.world['X_Origin'] = self.worldOrigin[0]
         bpy.context.scene.world['Y_Origin'] = self.worldOrigin[1]
         bpy.context.scene.world['Z_Origin'] = self.worldOrigin[2]
+        bpy.context.scene.world['Scale_X'] = self.scaleParam[0] if len(self.scaleParam) > 0 else 0.001
+        bpy.context.scene.world['Scale_Y'] = self.scaleParam[1] if len(self.scaleParam) > 1 else 0.001
+        bpy.context.scene.world['Scale_Z'] = self.scaleParam[2] if len(self.scaleParam) > 2 else 0.001
         print("World parameters have been set!")
 
     def createCityObjects(self):
@@ -191,6 +194,15 @@ class ImportProcess:
         if not ok:
             raise RuntimeError(f"CityJSON validation failed: {msg}")
         self.data = data
+        # expose metadata/version for editing and export
+        try:
+            bpy.context.scene["cj_metadata"] = self.data.get("metadata", {})
+        except Exception as exc:
+            print(f"[CityJSONEditor] Warning: failed to store metadata on scene: {exc}")
+        try:
+            bpy.context.scene["cj_version"] = self.data.get("version", "2.0")
+        except Exception:
+            bpy.context.scene["cj_version"] = "2.0"
         self.getTransformationParameters()
         self.scaleVertexCoordinates()
         status = self.checkImport()

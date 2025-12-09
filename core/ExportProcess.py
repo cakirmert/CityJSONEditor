@@ -4,6 +4,7 @@ Collects scene data, validates, and writes CityJSON 2.0.
 """
 
 import json
+import copy
 import bpy
 import os
 import shutil
@@ -23,43 +24,41 @@ class ExportProcess:
         self.skipped_objects = []
 
     def createJSONStruct(self):
-        if self.textureSetting: 
-            emptyJSON = {
-                "type": "CityJSON",
-                "version": "2.0",
-                "CityObjects": {},
-                "transform":{
-                    "scale":[
-                        0.001, 
-                        0.001,
-                        0.001
-                        ],
-                    "translate":[]
-                },
-                "vertices": None,
-                "appearance":{
-                    "textures":[],
-                    "vertices-texture":[]
-                },
-                "metadata": {}
-            }
-        else: 
-            emptyJSON = {
-                "type": "CityJSON",
-                "version": "2.0",
-                "CityObjects": {},
-                "transform":{
-                    "scale":[
-                        0.001, 
-                        0.001,
-                        0.001
-                        ],
-                    "translate":[]
-                },
-                "vertices": None,
-                "metadata": {}
-            }
-        self.jsonExport = emptyJSON
+        meta = {}
+        version = "2.0"
+        try:
+            meta = copy.deepcopy(bpy.context.scene.get("cj_metadata", {}))
+        except Exception:
+            meta = {}
+        try:
+            version = str(bpy.context.scene.get("cj_version", "2.0"))
+        except Exception:
+            version = "2.0"
+        base = {
+            "type": "CityJSON",
+            "version": version or "2.0",
+            "CityObjects": {},
+            "transform": {
+                "scale": [0.001, 0.001, 0.001],
+                "translate": [],
+            },
+            "vertices": None,
+            "metadata": meta if isinstance(meta, dict) else {},
+        }
+        # always start with clean geometry/appearance containers
+        base["CityObjects"] = {}
+        base["vertices"] = None
+        base.setdefault("transform", {}).setdefault("scale", [0.001, 0.001, 0.001])
+        base["transform"].setdefault("translate", [])
+        if self.textureSetting:
+            app = base.get("appearance") or {}
+            app["textures"] = []
+            app["vertices-texture"] = []
+            base["appearance"] = app
+        else:
+            if "appearance" in base:
+                del base["appearance"]
+        self.jsonExport = base
     
     def getMetadata(self):
         crs = None
@@ -79,6 +78,16 @@ class ExportProcess:
             ]
         except Exception:
             translate = [0, 0, 0]
+        try:
+            scale = [
+                bpy.context.scene.world.get('Scale_X', 0.001),
+                bpy.context.scene.world.get('Scale_Y', 0.001),
+                bpy.context.scene.world.get('Scale_Z', 0.001),
+            ]
+        except Exception:
+            scale = [0.001, 0.001, 0.001]
+        self.jsonExport.setdefault("transform", {})
+        self.jsonExport["transform"]["scale"] = scale
         self.jsonExport["transform"]["translate"] = translate
 
     def getTextures(self):
@@ -138,8 +147,15 @@ class ExportProcess:
         vertexArray = []
         blendObjects = bpy.data.objects
         lastVertexIndex = 0
+        scale = (self.jsonExport.get("transform") or {}).get("scale") or [0.001, 0.001, 0.001]
+        if len(scale) != 3:
+            scale = [0.001, 0.001, 0.001]
+        scale = [s if s not in (None, 0) else 0.001 for s in scale]
         for object in blendObjects:
             print("Create Export-Object: "+object.name)
+            if "cityJSONType" not in object or "LOD" not in object:
+                print(f"[CityJSONEditor] Skipping '{object.name}': not a CityJSON object.")
+                continue
             try:
                 cityobj = ExportCityObject(object, lastVertexIndex, self.jsonExport, self.textureSetting, self.textureReferenceList)
                 cityobj.execute()
@@ -150,9 +166,9 @@ class ExportProcess:
                     continue
                 raise
             for vertex in cityobj.vertices:
-                vertex[0] = round(vertex[0]/0.001)
-                vertex[1] = round(vertex[1]/0.001)
-                vertex[2] = round(vertex[2]/0.001)
+                vertex[0] = round(vertex[0]/scale[0])
+                vertex[1] = round(vertex[1]/scale[1])
+                vertex[2] = round(vertex[2]/scale[2])
                 vertexArray.append(vertex)
             self.jsonExport["CityObjects"].update(cityobj.json)
             lastVertexIndex = cityobj.lastVertexIndex + 1

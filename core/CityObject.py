@@ -8,6 +8,8 @@ import math
 from .Mesh import Mesh
 from .Material import Material
 import time
+import json
+import copy
 
 class ImportCityObject:
     """Create Blender mesh/object instances from a CityJSON CityObject."""
@@ -83,6 +85,18 @@ class ImportCityObject:
         if gmlid is None:
             gmlid = self.objectID
         newObj['gmlid'] = gmlid
+        # store structured data for editing instead of raw JSON caching
+        try:
+            geoms = self.object.get("geometry") or []
+            geom = geoms[0] if geoms else {}
+            newObj["cj_geometry_type"] = geom.get("type", "Solid")
+            newObj["cj_semantic_surfaces"] = (geom.get("semantics") or {}).get("surfaces") or []
+        except Exception as exc:
+            print(f"[CityJSONEditor] Warning: failed to store geometry metadata for '{self.objectID}': {exc}")
+        try:
+            newObj["cj_attributes"] = copy.deepcopy(attrs)
+        except Exception as exc:
+            print(f"[CityJSONEditor] Warning: failed to store attributes for '{self.objectID}': {exc}")
         # get the collection with the title "Collection"
         collection = bpy.data.collections.get("Collection")
         # add the new object to the collection
@@ -126,6 +140,10 @@ class ImportCityObject:
                 continue
             values = semantics.get("values", [[]])
             surfaces = semantics.get("surfaces", [])
+            try:
+                newObject["cj_semantic_surfaces"] = surfaces
+            except Exception:
+                pass
             if not values or not isinstance(values, list) or not values[0]:
                 raise ValueError(f"Semantics values missing for object '{self.objectID}'.")
             face_values = values[0]
@@ -138,6 +156,12 @@ class ImportCityObject:
                 surface_type = surfaces[surface_idx].get("type", "WallSurface") if surfaces else "WallSurface"
                 material = Material(surface_type, newObject, self.objectID, self.textureSetting, self.objectType, surfaceIndex, surface_idx, self.rawObjectData, self.filepath, geom )
                 material.execute()
+                try:
+                    # keep track of the original semantics index per polygon for lossless export
+                    stored_value = surfaceValue if surfaceValue is not None else -1
+                    newObject.data.polygons[surfaceIndex]["cje_semantic_index"] = stored_value
+                except Exception:
+                    pass
                 time_needed = time.time() - time_mat
                 # Update Progress Bar
                 self.printProgressBar(surfaceIndex+1 , l, prefix = 'Materials:', suffix = 'Complete', length = 50, time='t/m: %.4f sec' % (time_needed))
@@ -213,10 +237,17 @@ class ExportCityObject:
         # all vertices of the current object
         self.vertices = []
         self.objID = self.object.name
-        self.objType = self.object['cityJSONType']
-        self.lod = self.object['LOD']
+        self.objType = self.object.get('cityJSONType', "Building")
+        lod_raw = self.object.get('LOD', 0)
+        try:
+            self.lod = float(lod_raw)
+        except Exception:
+            self.lod = 0
         self.maxValue = ""
-        self.offsetArray = [bpy.context.scene.world['X_Origin'],bpy.context.scene.world['Y_Origin'],bpy.context.scene.world['Z_Origin']]
+        try:
+            self.offsetArray = [bpy.context.scene.world['X_Origin'],bpy.context.scene.world['Y_Origin'],bpy.context.scene.world['Z_Origin']]
+        except Exception:
+            self.offsetArray = [0,0,0]
         self.objGeoExtent = []
         self.json = {}
         self.geometry = []
@@ -228,6 +259,18 @@ class ExportCityObject:
         self.textureSetting = textureSetting
         self.counter = 0
         self.textureReferenceList = textureReferenceList
+        self.geometry_type = self.object.get("cj_geometry_type", "Solid")
+        self.source_semantics = {"surfaces": []}
+        try:
+            stored_surfaces = self.object.get("cj_semantic_surfaces", [])
+            if isinstance(stored_surfaces, list):
+                self.source_semantics["surfaces"] = copy.deepcopy(stored_surfaces)
+        except Exception:
+            self.source_semantics = {"surfaces": []}
+        try:
+            self.attributes = copy.deepcopy(self.object.get("cj_attributes", {}))
+        except Exception:
+            self.attributes = {}
 
 
     def getVertices(self):
@@ -255,6 +298,20 @@ class ExportCityObject:
             objGeoExtend.append(round(i,3))
         self.objGeoExtent = objGeoExtend
 
+    def _surface_key(self, surface):
+        try:
+            return json.dumps(surface, sort_keys=True)
+        except Exception:
+            return str(surface.get("type", ""))
+
+    def _surface_from_source(self, surface_type):
+        surfaces = (self.source_semantics.get("surfaces") or {}) if isinstance(self.source_semantics, dict) else []
+        if isinstance(surfaces, list):
+            for surf in surfaces:
+                if isinstance(surf, dict) and surf.get("type") == surface_type:
+                    return copy.deepcopy(surf)
+        return {"type": surface_type}
+
     def getBoundaries(self):
         # get the mesh by name
         mesh = bpy.data.meshes[self.objID]
@@ -276,31 +333,70 @@ class ExportCityObject:
             boundaries.append([loop])
         maxVertex = max([max(j) for j in [max(i) for i in boundaries]])
         self.lastVertexIndex = maxVertex
-        self.geometry = [{
-            "type": "Solid",
+        geom_type = self.geometry_type if self.geometry_type in ("Solid", "MultiSurface") else "Solid"
+        geom_entry = {
+            "type": geom_type,
             "lod": self.lod,
-            "boundaries" : [boundaries]
-        }]
+        }
+        if geom_type == "MultiSurface":
+            geom_entry["boundaries"] = boundaries
+        else:
+            geom_entry["boundaries"] = [boundaries]
+        self.geometry = [geom_entry]
 
     def getSemantics(self):
         mesh = bpy.data.meshes[self.objID]
         self.semanticValues = []
-        self.semanticSurfaces =[]
+        self.semanticSurfaces = [copy.deepcopy(s) for s in (self.source_semantics.get("surfaces") or [])] if isinstance(self.source_semantics, dict) else []
+        surface_lookup = {self._surface_key(s): idx for idx, s in enumerate(self.semanticSurfaces)}
         # iterate through polygons
         for polyIndex, poly  in enumerate(mesh.polygons):
             # index of the material slot of the current polygon in blender
             blenderMaterialIndex = poly.material_index 
+            semanticSurface = "WallSurface"
+            if blenderMaterialIndex < len(mesh.materials) and mesh.materials[blenderMaterialIndex]:
+                mat = mesh.materials[blenderMaterialIndex]
+                try:
+                    semanticSurface = mat.get('CJEOtype', semanticSurface)
+                except Exception:
+                    semanticSurface = semanticSurface
+            stored_idx = None
+            try:
+                stored_idx = poly.get("cje_semantic_index")
+            except Exception:
+                try:
+                    stored_idx = poly["cje_semantic_index"]
+                except Exception:
+                    stored_idx = None
+            surface_idx = None
+            if stored_idx is not None:
+                if stored_idx == -1:
+                    self.semanticValues.append(None)
+                else:
+                    try:
+                        surface_idx = int(stored_idx)
+                    except Exception:
+                        surface_idx = None
+                    if surface_idx is not None:
+                        while surface_idx >= len(self.semanticSurfaces):
+                            new_surface = self._surface_from_source(semanticSurface)
+                            self.semanticSurfaces.append(new_surface)
+                            surface_lookup[self._surface_key(new_surface)] = len(self.semanticSurfaces) - 1
+                        self.semanticValues.append(surface_idx)
+                    else:
+                        self.semanticValues.append(None)
+            else:
+                key = self._surface_key({"type": semanticSurface})
+                if key in surface_lookup:
+                    surface_idx = surface_lookup[key]
+                else:
+                    surface_idx = len(self.semanticSurfaces)
+                    new_surface = self._surface_from_source(semanticSurface)
+                    self.semanticSurfaces.append(new_surface)
+                    surface_lookup[key] = surface_idx
+                self.semanticValues.append(surface_idx)
 
-            # List of all polygons in index order from 0 to xxx
-            self.semanticValues.append(polyIndex)
-            
-            # type of surface (semantic of surface) of current polygon
-            semanticSurface = mesh.materials[blenderMaterialIndex]['CJEOtype']
-            # List of semantics in reordered from blenders indices to order of polygon indices
-            # example: polygon 4 has semanticValue index of 4 --> semantics of material that is in material slot 163 in blender is written at the current index of 4 in the semanticSurfaces list via append  
-            self.semanticSurfaces.append({"type": semanticSurface})
-
-            if self.textureSetting:
+            if self.textureSetting and blenderMaterialIndex < len(mesh.materials):
                 # extract uv mapping
                 self.getTextureMapping(mesh, poly, blenderMaterialIndex, polyIndex)
 
@@ -336,14 +432,21 @@ class ExportCityObject:
             self.counter =+ 1
 
     def createJSON(self):
-        self.json = {self.objID : {"type": self.objType}}
-        if self.objType == 'GenericCityObject':
-            pass
-        else:
+        base = {}
+        base["type"] = self.objType
+        base["attributes"] = self.attributes if isinstance(self.attributes, dict) else {}
+        if "gmlid" in self.object and "gmlid" not in base["attributes"]:
+            try:
+                base["attributes"]["gmlid"] = self.object["gmlid"]
+            except Exception:
+                pass
+        has_semantics = any(v is not None for v in self.semanticValues) or bool(self.semanticSurfaces)
+        if self.objType != 'GenericCityObject' and has_semantics:
             self.geometry[0].update({"semantics" : {"values" : [self.semanticValues],"surfaces" : self.semanticSurfaces}})
-        if self.textureSetting: 
+        if self.textureSetting and self.textureValues: 
             self.geometry[0].update({"texture" : {"default" : { "values" : [self.textureValues] }}})
-        self.json[self.objID].update({"geometry" : self.geometry})
+        base["geometry"] = self.geometry
+        self.json = {self.objID : base}
         
     def execute(self):
         self.getVertices()

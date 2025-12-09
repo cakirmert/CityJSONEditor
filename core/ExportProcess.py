@@ -109,14 +109,18 @@ class ExportProcess:
        
         for mesh in meshes:
             if not mesh.uv_layers:
-                raise RuntimeError(f"Mesh '{mesh.name}' has textures enabled for export but no UV layers.")
+                print(f"[CityJSONEditor] Skipping texture export for '{mesh.name}': no UV layers.")
+                continue
             uv_layer = mesh.uv_layers[0].data
             for polyIndex, poly  in enumerate(mesh.polygons):
                 semantic = poly.material_index
                 if semantic >= len(mesh.materials):
-                    raise RuntimeError(f"Polygon {polyIndex} in mesh '{mesh.name}' references missing material index {semantic}.")
+                    print(f"[CityJSONEditor] Skipping texture on poly {polyIndex} in '{mesh.name}': material index {semantic} missing.")
+                    continue
                 loopTotal = poly.loop_total
-                if len(mesh.materials[semantic].node_tree.nodes) > 2:
+                mat = mesh.materials[semantic]
+                node_tree = getattr(mat, "node_tree", None)
+                if node_tree and len(node_tree.nodes) > 2:
                     for loop_index in range(poly.loop_start, poly.loop_start + loopTotal):
                         uv = uv_layer[loop_index].uv
                         u = uv[0]
@@ -124,8 +128,9 @@ class ExportProcess:
                         vertices_textureJSON = [round(u,7),
                                                 round(v,7)]
                         self.jsonExport['appearance']['vertices-texture'].append(vertices_textureJSON)
-                else: 
-                    pass
+                else:
+                    # No texture nodes; skip quietly
+                    continue
 
     def createCityObject(self):
         vertexArray = []

@@ -23,8 +23,13 @@ class ImportCityJSON(Operator, ImportHelper):
         description="Choose if textures present in the CityJSON file should be imported",
         default=True,
     )
+    lod_filter: StringProperty(
+        name="Import LoDs",
+        description="Comma-separated LoDs to import (leave empty to import all)",
+        default="",
+    )
     
     # Operator Main Method (Import-Process)
     def execute(self, context):
-        importAndParse = ImportProcess(self.filepath, self.texture_setting)
+        importAndParse = ImportProcess(self.filepath, self.texture_setting, self.lod_filter)
         return importAndParse.execute()

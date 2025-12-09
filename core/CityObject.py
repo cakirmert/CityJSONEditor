@@ -92,18 +92,22 @@ class ImportCityObject:
                 face_count += len(shell)
         else:
             face_count = len(boundaries)
+        if semantics is None:
+            return None
         if not isinstance(semantics, dict):
-            raise ValueError(f"Semantics missing for object '{self.objectID}'.")
+            raise ValueError(f"Semantics must be an object for '{self.objectID}'.")
         values = semantics.get("values")
         surfaces = semantics.get("surfaces")
-        if not values or not isinstance(values, list) or not values[0]:
-            raise ValueError(f"Semantics values missing for object '{self.objectID}'.")
-        if not surfaces:
-            raise ValueError(f"Semantics surfaces missing for object '{self.objectID}'.")
-        first = values[0]
-        if face_count and len(first) != face_count:
+        if values and not isinstance(values, list):
+            raise ValueError(f"Semantics values invalid for '{self.objectID}'.")
+        if values and not values[0]:
+            raise ValueError(f"Semantics values empty for '{self.objectID}'.")
+        if values and not surfaces:
+            raise ValueError(f"Semantics surfaces missing for '{self.objectID}'.")
+        first = values[0] if values else []
+        if face_count and first and len(first) != face_count:
             raise ValueError(f"Semantic values count ({len(first)}) does not match face count ({face_count}) for object '{self.objectID}'.")
-        return semantics
+        return semantics if values else None
 
 
     def createMaterials(self, newObject):
@@ -111,6 +115,9 @@ class ImportCityObject:
             if self.object['type']=='GenericCityObject':
                 continue
             semantics = self._semantics_for_geometry(geom)
+            if semantics is None:
+                print(f"No semantics found for object '{self.objectID}'; skipping material assignment.")
+                continue
             values = semantics.get("values", [[]])
             surfaces = semantics.get("surfaces", [])
             if not values or not isinstance(values, list) or not values[0]:

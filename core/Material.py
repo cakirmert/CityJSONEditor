@@ -74,14 +74,20 @@ class Material:
     def setTexture(self):
         
         if not hasattr(self, "appearances"):
-            raise RuntimeError(f"Appearance section missing for object '{self.objectID}' while importing textures.")
+            print(f"[CityJSONEditor] Appearance missing for '{self.objectID}', falling back to color.")
+            self.setColor()
+            return
         if 'texture' not in self.geometry:
-            raise RuntimeError(f"Texture entry missing in geometry for object '{self.objectID}'.")
+            print(f"[CityJSONEditor] Geometry.texture missing for '{self.objectID}', falling back to color.")
+            self.setColor()
+            return
         
         # list of all themes used in the object
         themeNames = list(self.geometry['texture'].keys())
         if not themeNames:
-            raise RuntimeError(f"No texture themes found for object '{self.objectID}'.")
+            print(f"[CityJSONEditor] No texture themes for '{self.objectID}', falling back to color.")
+            self.setColor()
+            return
         # name of the first theme, as this is the default for now
         themeName = themeNames[0]
         # stacked array of texture references

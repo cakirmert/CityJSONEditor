@@ -12,7 +12,7 @@ from .validation import prepare_cityjson_for_import
 class ImportProcess:
     """Handles reading/preparing CityJSON and instantiating Blender objects."""
 
-    def __init__(self, filepath, textureSetting):
+    def __init__(self, filepath, textureSetting, lod_filter=""):
         # File to be imported
         self.filepath = filepath
         # Content of imported file
@@ -29,6 +29,22 @@ class ImportProcess:
         self.textureSetting = textureSetting
         # vertices before scaling
         self.unScaledVertices = []
+        # LoD filter set (floats) if provided
+        self.lod_filter = self._parse_lod_filter(lod_filter)
+
+    def _parse_lod_filter(self, lod_filter: str):
+        vals = set()
+        if not lod_filter:
+            return vals
+        for part in lod_filter.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                vals.add(float(part))
+            except ValueError:
+                continue
+        return vals
 
     def getTransformationParameters(self):
 
@@ -139,8 +155,19 @@ class ImportProcess:
         cityobjects = self.data.get('CityObjects') or {}
         for objID, object in cityobjects.items():
             print('Creating object: '+ objID)
-            cityobj = ImportCityObject(object, self.vertices, objID, self.textureSetting, self.data, self.filepath)
-            cityobj.execute()
+            filtered = object.copy()
+            geoms = filtered.get("geometry") or []
+            if self.lod_filter:
+                geoms = [g for g in geoms if float(g.get("lod", 0)) in self.lod_filter]
+            if not geoms:
+                print(f"Skipping CityObject '{objID}' because no geometry matched LoD filter {sorted(self.lod_filter)}.")
+                continue
+            filtered["geometry"] = geoms
+            cityobj = ImportCityObject(filtered, self.vertices, objID, self.textureSetting, self.data, self.filepath)
+            try:
+                cityobj.execute()
+            except RuntimeError as exc:
+                raise RuntimeError(f"Failed to import CityObject '{objID}': {exc}") from exc
         print('All CityObjects have been created!')
 
     def execute(self):

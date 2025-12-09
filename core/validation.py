@@ -76,19 +76,21 @@ def _normalize_cityjson_lods(data: dict) -> bool:
 
 
 def _check_semantics(data: dict) -> tuple[bool, str]:
-    """Ensure every geometry has semantics/surfaces/values; surface errors instead of auto-fixing."""
+    """Ensure semantics are consistent when present; semantics are optional in CityJSON."""
     cityobjects = data.get("CityObjects", {}) or {}
     for co_id, obj in cityobjects.items():
         geoms = obj.get("geometry") or []
         for geom in geoms:
             semantics = geom.get("semantics")
+            if semantics is None:
+                continue  # semantics are optional
             if not isinstance(semantics, dict):
-                return False, f"Missing semantics for geometry in CityObject '{co_id}'."
+                return False, f"Semantics must be an object in CityObject '{co_id}'."
             values = semantics.get("values")
             surfaces = semantics.get("surfaces")
-            if not values or not isinstance(values, list) or not values[0]:
-                return False, f"Semantics values missing/empty for CityObject '{co_id}'."
-            if not surfaces:
+            if values is not None and (not isinstance(values, list) or (values and not values[0])):
+                return False, f"Semantics values invalid for CityObject '{co_id}'."
+            if values and not surfaces:
                 return False, f"Semantics surfaces missing for CityObject '{co_id}'."
     return True, ""
 

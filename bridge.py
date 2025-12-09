@@ -159,8 +159,8 @@ def _validate_with_cjio(path: Path) -> tuple[bool, str]:
     except Exception:
         version = None
 
-    # Prefer a bundled cjio (submodule) if present; otherwise fall back to PATH.
     cjio_dir = Path(__file__).resolve().parent / "cjio"
+    venv_cjio = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "cjio"
     cmd_prefix: List[str] = []
     if "CJIO_BIN" in env and env["CJIO_BIN"]:
         cmd_prefix = [env["CJIO_BIN"]]
@@ -169,13 +169,15 @@ def _validate_with_cjio(path: Path) -> tuple[bool, str]:
             f"{env.get('PYTHONPATH','')}:{cjio_dir.parent.as_posix()}".strip(":")
         )
         cmd_prefix = [bpy.app.binary_path_python, "-m", "cjio"]
+    elif venv_cjio.exists():
+        cmd_prefix = [str(venv_cjio)]
     else:
         found = shutil.which("cjio")
         if found:
             cmd_prefix = [found]
 
     if not cmd_prefix:
-        return True, "cjio not installed; skipping validation."
+        return False, "cjio not installed; set CJIO_BIN or install into .venv"
 
     target = path
     temp_file = None

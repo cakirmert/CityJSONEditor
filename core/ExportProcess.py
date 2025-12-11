@@ -32,6 +32,7 @@ class ExportProcess:
                 self.keep_transform = bool(bpy.context.scene.get("cj_has_transform", True))
             except Exception:
                 self.keep_transform = True
+        self._cached_objs = None
 
     def _load_baseline(self):
         txt = bpy.data.texts.get("CJE_BASELINE")
@@ -79,6 +80,20 @@ class ExportProcess:
                 del base["appearance"]
         self.jsonExport = base
     
+    def _gather_objects(self):
+        if self._cached_objs is not None:
+            return self._cached_objs
+        objs = []
+        for obj in bpy.data.objects:
+            if getattr(obj, "type", "") != "MESH":
+                continue
+            if "cityJSONType" not in obj:
+                continue
+            export_id = obj.get("cj_source_id", obj.name.split("__")[0])
+            objs.append((export_id, obj))
+        self._cached_objs = objs
+        return objs
+
     def getMetadata(self):
         crs = None
         try:
@@ -169,7 +184,7 @@ class ExportProcess:
         baseline_cityobjects = (self.baseline_data.get("CityObjects") or {}) if self.baseline_data else {}
         baseline_vertices = (self.baseline_data.get("vertices") or []) if (self.baseline_data and self.export_changed_only) else []
         vertexArray = list(baseline_vertices)
-        blendObjects = [obj for obj in bpy.data.objects if getattr(obj, "type", "") == "MESH"]
+        blendObjects = [obj for _, obj in self._gather_objects()]
         lastVertexIndex = len(vertexArray)
         default_scale = [0.001, 0.001, 0.001] if self.keep_transform else [1, 1, 1]
         scale = (self.jsonExport.get("transform") or {}).get("scale") or default_scale
@@ -178,12 +193,7 @@ class ExportProcess:
         scale = [s if s not in (None, 0) else default_scale[idx] for idx, s in enumerate(scale)]
         grouped = copy.deepcopy(baseline_cityobjects) if self.export_changed_only and baseline_cityobjects else {}
 
-        objs = []
-        for object in blendObjects:
-            if "cityJSONType" not in object:
-                continue
-            export_id = object.get("cj_source_id", object.name.split("__")[0])
-            objs.append((export_id, object))
+        objs = self._gather_objects()
 
         dirty_ids = set()
         if self.export_changed_only:
@@ -300,6 +310,22 @@ class ExportProcess:
         print('##########################')
         print('### STARTING EXPORT... ###')
         print('##########################')
+
+        # If nothing changed and a baseline exists, reuse it verbatim to guarantee round-trip equality.
+        baseline_cityobjects = (self.baseline_data.get("CityObjects") or {}) if self.baseline_data else {}
+        if self.export_changed_only and self.baseline_data:
+            dirty = []
+            for export_id, obj in self._gather_objects():
+                if obj.get("cj_dirty", False) or export_id not in baseline_cityobjects:
+                    dirty.append(export_id)
+            if not dirty:
+                self.jsonExport = copy.deepcopy(self.baseline_data)
+                self.writeData()
+                print("[CityJSONEditor] No dirty objects; wrote baseline without changes.")
+                print('########################')
+                print('### EXPORT FINISHED! ###')
+                print('########################')
+                return {'FINISHED'}
 
         self.createJSONStruct()
         self.getMetadata()

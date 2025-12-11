@@ -28,12 +28,12 @@ class ExportCityJSON(Operator, ExportHelper):
     patch_baseline: BoolProperty(
         name="Patch baseline (preserve unknown keys)",
         description="If enabled, merge export into stored baseline CityJSON to keep unknown/unedited fields",
-        default=False,
+        default=True,
     )
     export_changed_only: BoolProperty(
         name="Export only changed objects",
         description="When patching, only replace CityObjects marked dirty or new; keeps others from baseline.",
-        default=False,
+        default=True,
     )
     skip_failed_exports: BoolProperty(
         name="Skip failed objects",

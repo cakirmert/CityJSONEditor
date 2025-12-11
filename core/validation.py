@@ -75,6 +75,26 @@ def _normalize_cityjson_lods(data: dict) -> bool:
     return changed
 
 
+def _normalize_semantics_values(data: dict) -> bool:
+    """
+    Ensure semantics.values is a list of lists (per CityJSON spec).
+    Some exporters provide a flat list; wrap it to keep downstream code stable.
+    """
+    changed = False
+    cityobjects = data.get("CityObjects", {}) or {}
+    for obj in cityobjects.values():
+        geoms = obj.get("geometry") or []
+        for geom in geoms:
+            semantics = geom.get("semantics")
+            if not semantics or not isinstance(semantics, dict):
+                continue
+            values = semantics.get("values")
+            if isinstance(values, list) and values and not isinstance(values[0], list):
+                semantics["values"] = [values]
+                changed = True
+    return changed
+
+
 def _check_semantics(data: dict) -> tuple[bool, str]:
     """Ensure semantics are consistent when present; semantics are optional in CityJSON."""
     cityobjects = data.get("CityObjects", {}) or {}
@@ -88,8 +108,13 @@ def _check_semantics(data: dict) -> tuple[bool, str]:
                 return False, f"Semantics must be an object in CityObject '{co_id}'."
             values = semantics.get("values")
             surfaces = semantics.get("surfaces")
-            if values is not None and (not isinstance(values, list) or (values and not values[0])):
+            # Accept flat list (already normalized upstream), or list-of-lists.
+            if values is not None and not isinstance(values, list):
                 return False, f"Semantics values invalid for CityObject '{co_id}'."
+            if values and isinstance(values, list):
+                first = values[0] if isinstance(values[0], list) else values
+                if not first:
+                    return False, f"Semantics values empty for CityObject '{co_id}'."
             if values and not surfaces:
                 return False, f"Semantics surfaces missing for CityObject '{co_id}'."
     return True, ""
@@ -138,6 +163,8 @@ def prepare_cityjson_for_import(
         return False, msg, None, False
     changed = False
     if _normalize_cityjson_lods(data):
+        changed = True
+    if _normalize_semantics_values(data):
         changed = True
     sem_ok, sem_msg = _check_semantics(data)
     if not sem_ok:

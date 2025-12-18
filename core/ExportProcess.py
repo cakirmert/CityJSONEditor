@@ -52,22 +52,16 @@ class ExportProcess:
         except Exception:
             meta = {}
         # Try to get the version from the scene, but upgrade if it's 2.0 or lower
-        try:
-            v_raw = str(bpy.context.scene.get("cj_version", "2.0"))
-            if v_raw.startswith("1") or v_raw == "2.0":
-                version = "2.0"
-            else:
-                version = v_raw
-        except Exception:
+            # Use 2.0 as 2.0.1 is not supported by cjio/cjvalpy
+        version = "2.0"
+        if bpy.context.scene.get("cj_version"):
+            # We strictly use 2.0 for the exported file header for tool compatibility
             version = "2.0"
-        if version and float(version) < 2.0:
-            version = "2.0"
+        
         base = {
             "type": "CityJSON",
             "version": version,
-            "CityObjects": {},
-            "vertices": None,
-            "metadata": meta if isinstance(meta, dict) else {},
+            "metadata": meta
         }
         if self.keep_transform:
             base["transform"] = {
@@ -236,11 +230,14 @@ class ExportProcess:
                     continue
                 raise
             for vertex in cityobj.vertices:
-                vertex[0] = round(vertex[0]/scale[0])
-                vertex[1] = round(vertex[1]/scale[1])
-                vertex[2] = round(vertex[2]/scale[2])
-                vertexArray.append(vertex)
-            lastVertexIndex = cityobj.lastVertexIndex + 1
+                v = list(vertex)
+                v[0] = round(v[0]/scale[0])
+                v[1] = round(v[1]/scale[1])
+                v[2] = round(v[2]/scale[2])
+                vertexArray.append(v)
+            
+            # Update lastVertexIndex for NEXT object
+            lastVertexIndex = len(vertexArray)
             entry = grouped.get(export_id)
             if entry is None:
                 entry = {"type": base_obj["type"], "attributes": base_obj.get("attributes", {}), "geometry": []}
@@ -253,17 +250,24 @@ class ExportProcess:
             # Merge geometries: replace existing LoD or append new one
             new_geoms = base_obj.get("geometry", [])
             if new_geoms:
+                if "geometry" not in entry:
+                    entry["geometry"] = []
+
+                def _normalize_lod_val(val):
+                    try:
+                        return f"{float(val):g}"
+                    except (ValueError, TypeError):
+                        return str(val)
+
                 for n_geo in new_geoms:
-                    n_lod = str(n_geo.get("lod"))
-                    # Find and replace matching LoD in entry
-                    replaced = False
-                    for idx, e_geo in enumerate(entry.get("geometry", [])):
-                        if str(e_geo.get("lod")) == n_lod:
-                            entry["geometry"][idx] = n_geo
-                            replaced = True
-                            break
-                    if not replaced:
-                        entry.setdefault("geometry", []).append(n_geo)
+                    n_lod = _normalize_lod_val(n_geo.get("lod"))
+                    # Remove all existing geometries with matching LoD to prevent duplication
+                    entry["geometry"] = [
+                        g for g in entry["geometry"] 
+                        if _normalize_lod_val(g.get("lod")) != n_lod
+                    ]
+                    # Add current geometry from Blender
+                    entry["geometry"].append(n_geo)
             print("lastVertexIndex "+str(lastVertexIndex))
         self.jsonExport['version'] = '2.0'
         self.jsonExport['vertices'] = vertexArray

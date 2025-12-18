@@ -378,7 +378,7 @@ class ExportCityObject:
         geom_type = self.geometry_type if self.geometry_type in ("Solid", "MultiSurface") else "Solid"
         geom_entry = {
             "type": geom_type,
-            "lod": str(self.lod),
+            "lod": f"{float(self.lod):g}",
         }
         if geom_type == "MultiSurface":
             geom_entry["boundaries"] = boundaries
@@ -392,6 +392,7 @@ class ExportCityObject:
             self.semanticSurfaces = []
             return
         mesh = bpy.data.meshes[self.objID]
+        # Clear local semantic values so they don't leak into subsequent objects if this one had no geometry
         self.semanticValues = []
         self.semanticSurfaces = [copy.deepcopy(s) for s in (self.source_semantics.get("surfaces") or [])] if isinstance(self.source_semantics, dict) else []
         surface_lookup = {self._surface_key(s): idx for idx, s in enumerate(self.semanticSurfaces)}
@@ -510,14 +511,27 @@ class ExportCityObject:
         has_semantics = any(v is not None for v in self.semanticValues) or bool(self.semanticSurfaces)
         if self.include_semantics and self.objType != 'GenericCityObject' and has_semantics:
             self.geometry[0].update({"semantics" : {"values" : [self.semanticValues],"surfaces" : self.semanticSurfaces}})
-        if self.textureSetting and self.textureValues: 
-            # Ensure texture values are clean (no null list of lists if possible)
+        
+        # Only include texture if we have at least one non-null mapping (integer index)
+        def has_any_int(item):
+            if isinstance(item, int):
+                return True
+            if isinstance(item, list):
+                return any(has_any_int(sub) for sub in item)
+            return False
+
+        has_valid_texture = has_any_int(self.textureValues)
+        
+        if has_valid_texture:
             self.geometry[0].update({"texture" : {"default" : { "values" : [self.textureValues] }}})
         
-        # Ensure 'lod' is always a string for schema compliance
-        if self.geometry and len(self.geometry) > 0:
-            lod_val = self.geometry[0].get("lod", "3")
-            self.geometry[0]["lod"] = str(lod_val)
+        if self.geometry:
+            for geom in self.geometry:
+                if "lod" in geom:
+                    try:
+                        geom["lod"] = f"{float(geom['lod']):g}"
+                    except (ValueError, TypeError):
+                        geom["lod"] = str(geom["lod"])
         base["geometry"] = self.geometry
         self.json = {self.export_id : base}
         

@@ -145,7 +145,8 @@ class ImportProcess:
 
     def createWorldProperties(self):
         metadata = self.data.get('metadata') or {}
-        bpy.context.scene.world['CRS'] = metadata.get('referenceSystem', 'undefined')
+        # Use empty string instead of 'undefined' to avoid schema validation errors
+        bpy.context.scene.world['CRS'] = metadata.get('referenceSystem', '')
         bpy.context.scene.world['X_Origin'] = self.worldOrigin[0]
         bpy.context.scene.world['Y_Origin'] = self.worldOrigin[1]
         bpy.context.scene.world['Z_Origin'] = self.worldOrigin[2]

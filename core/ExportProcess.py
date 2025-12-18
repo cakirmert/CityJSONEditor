@@ -46,18 +46,23 @@ class ExportProcess:
 
     def createJSONStruct(self):
         meta = {}
-        version = "2.0"
+        version = "2.0.1"  # Default to 2.0.1 for better schema compatibility
         try:
             meta = copy.deepcopy(bpy.context.scene.get("cj_metadata", {}))
         except Exception:
             meta = {}
+        # Try to get the version from the scene, but upgrade if it's 2.0 or lower
         try:
-            version = str(bpy.context.scene.get("cj_version", "2.0"))
+            v_raw = str(bpy.context.scene.get("cj_version", "2.0.1"))
+            if v_raw.startswith("1") or v_raw == "2.0":
+                version = "2.0.1"
+            else:
+                version = v_raw
         except Exception:
-            version = "2.0"
+            version = "2.0.1"
         base = {
             "type": "CityJSON",
-            "version": version or "2.0",
+            "version": version,
             "CityObjects": {},
             "vertices": None,
             "metadata": meta if isinstance(meta, dict) else {},
@@ -101,7 +106,10 @@ class ExportProcess:
         except Exception:
             crs = None
         if crs is not None:
-            self.jsonExport.setdefault("metadata", {}).update({"referenceSystem" : str(crs)})
+            crs_str = str(crs).strip()
+            # Basic validation for OGC CRS URLs, and skip "undefined" placeholders
+            if crs_str and crs_str.lower() != "undefined":
+                self.jsonExport.setdefault("metadata", {}).update({"referenceSystem" : crs_str})
 
     def getTransform(self):
         if not self.keep_transform:
@@ -135,9 +143,17 @@ class ExportProcess:
                 pass
             else:
                 basename = texture.name
+                if not basename:
+                    print(f"[CityJSONEditor] Skipping image with no name.")
+                    continue
+                # Normalize image type for CityJSON schema (usually JPG or PNG)
+                cityjson_type = imageType.upper()
+                if cityjson_type == 'JPEG':
+                    cityjson_type = 'JPG'
+                
                 imageName = "appearance/" + basename
                 textureJSON = {
-                    "type": imageType,
+                    "type": cityjson_type,
                     "image": imageName,
                     "wrapMode":"wrap",
                     "textureType":"specific",
@@ -202,10 +218,12 @@ class ExportProcess:
                 if dirty:
                     dirty_ids.add(export_id)
 
-        for export_id, object in objs:
+        objs_count = len(objs)
+        for i, (export_id, object) in enumerate(objs):
             if self.export_changed_only and dirty_ids and export_id not in dirty_ids:
                 continue
-            print("Create Export-Object: "+object.name)
+            if i % 50 == 0:
+                print(f"Create Export-Object {i+1}/{objs_count}: {object.name}")
             try:
                 cityobj = ExportCityObject(object, lastVertexIndex, self.jsonExport, self.textureSetting, self.textureReferenceList)
                 export_id, base_obj = cityobj.execute()

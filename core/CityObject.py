@@ -166,7 +166,7 @@ class ImportCityObject:
                 raise ValueError(f"Semantics values missing for object '{self.objectID}'.")
             face_values = values[0]
             l = len(face_values)
-            self.printProgressBar(0, l, prefix = 'Materials:', suffix = 'Complete', length = 50)
+            # self.printProgressBar(0, l, prefix = 'Materials:', suffix = 'Complete', length = 50)
             for surfaceIndex, surfaceValue in enumerate(face_values):
                 time_mat = time.time()
                 surface_idx = surfaceValue if surfaceValue is not None else 0
@@ -187,7 +187,7 @@ class ImportCityObject:
                         pass
                 time_needed = time.time() - time_mat
                 # Update Progress Bar
-                self.printProgressBar(surfaceIndex+1 , l, prefix = 'Materials:', suffix = 'Complete', length = 50, time='t/m: %.4f sec' % (time_needed))
+                # self.printProgressBar(surfaceIndex+1 , l, prefix = 'Materials:', suffix = 'Complete', length = 50, time='t/m: %.4f sec' % (time_needed))
             if not l:
                 raise ValueError(f"No semantic values found for object '{self.objectID}'.")
             
@@ -239,18 +239,19 @@ class ImportCityObject:
     def execute(self):
         self.createMesh(self.object, self.vertices, self.objectID)
         newObject = self.createObject(self.mesh)
-        print("Mesh has been created!")
-        # select the object to become active object
+        # select the object
         bpy.data.objects[self.objectID].select_set(True)
         bpy.context.view_layer.objects.active = bpy.data.objects[self.objectID]
         # create the objects materials and assign them
         self.createMaterials(newObject)
-        if self.textureSetting ==True:
+        if self.textureSetting == True:
             try:
                 # UV Mapping of the textures
                 self.uvMapping(newObject, self.rawObjectData, self.object['geometry'][0])
             except:
-                    print("UV Mapping was not possible because the CityJSON file does not contain appearances!")
+                if not getattr(bpy.types.Scene, "cje_warned_uv", False):
+                    print("[CityJSONEditor] UV Mapping was not possible for some objects.")
+                    bpy.types.Scene.cje_warned_uv = True
         else: pass
 
 class ExportCityObject:
@@ -459,8 +460,18 @@ class ExportCityObject:
 
             # index of texture in appearances section of CityJSON
             # name of the image of the material
-            faceMaterial = mesh.materials[semantic].node_tree.nodes['Image Texture'].image.name
-            textureIndex =  self.textureReferenceList.index(faceMaterial)
+            img = mesh.materials[semantic].node_tree.nodes['Image Texture'].image
+            if not img:
+                print(str(polyIndex) + " has texture node but NO image assigned!")
+                self.textureValues.append([[None]])
+                return
+            faceMaterial = img.name
+            try:
+                textureIndex =  self.textureReferenceList.index(faceMaterial)
+            except ValueError:
+                print(f"[CityJSONEditor] Image '{faceMaterial}' not found in textureReferenceList. Skipping.")
+                self.textureValues.append([[None]])
+                return
 
             # number of loops in the polygon (is equal to vertices)
             loopTotal = poly.loop_total
@@ -495,7 +506,13 @@ class ExportCityObject:
         if self.include_semantics and self.objType != 'GenericCityObject' and has_semantics:
             self.geometry[0].update({"semantics" : {"values" : [self.semanticValues],"surfaces" : self.semanticSurfaces}})
         if self.textureSetting and self.textureValues: 
+            # Ensure texture values are clean (no null list of lists if possible)
             self.geometry[0].update({"texture" : {"default" : { "values" : [self.textureValues] }}})
+        
+        # Ensure 'lod' is always a string for schema compliance
+        if self.geometry and len(self.geometry) > 0:
+            lod_val = self.geometry[0].get("lod", "3")
+            self.geometry[0]["lod"] = str(lod_val)
         base["geometry"] = self.geometry
         self.json = {self.export_id : base}
         

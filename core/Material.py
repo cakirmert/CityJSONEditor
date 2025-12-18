@@ -54,7 +54,9 @@ class Material:
         self.material = material
         """
 
-        object = bpy.context.object
+        object = self.currentObject
+        if not object:
+            raise RuntimeError(f"No object provided to Material for '{self.objectID}'")
         # add a new slot for the material in the current object
         object.data.materials.append(None)
         # get the material slots of the object
@@ -74,7 +76,9 @@ class Material:
     def setTexture(self):
         
         if not hasattr(self, "appearances"):
-            print(f"[CityJSONEditor] Appearance missing for '{self.objectID}', falling back to color.")
+            if not getattr(bpy.types.Scene, "cje_warned_appearance", False):
+                print(f"[CityJSONEditor] Appearance missing in file, falling back to color for objects.")
+                bpy.types.Scene.cje_warned_appearance = True
             self.setColor()
             return
         if 'texture' not in self.geometry:
@@ -151,13 +155,18 @@ class Material:
     # Methods for use in edit-mode context menu and face-normal based calculation
 
     def addMaterialToFace(self, index, faceIndex):
-        me = bpy.context.object.data
+        me = self.currentObject.data
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()
         bm.faces[faceIndex].select = True
         bmesh.update_edit_mesh(me)
-        bpy.context.object.active_material_index = index
+        object = self.currentObject
+        object.active_material_index = index
+        # We still need context for ops, but let's ensure it's the right one
+        old_active = bpy.context.view_layer.objects.active
+        bpy.context.view_layer.objects.active = object
         bpy.ops.object.material_slot_assign()
+        bpy.context.view_layer.objects.active = old_active
         bpy.ops.mesh.select_all(action='DESELECT')
 
     def execute(self):

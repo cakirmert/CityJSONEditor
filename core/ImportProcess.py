@@ -157,8 +157,10 @@ class ImportProcess:
     def createCityObjects(self):
         # create the CityObjects with coresponding meshesS
         cityobjects = self.data.get('CityObjects') or {}
-        for objID, object in cityobjects.items():
-            print('Creating object: '+ objID)
+        objs_count = len(cityobjects)
+        for i, (objID, object) in enumerate(cityobjects.items()):
+            if i % 50 == 0:
+                print(f'Creating object {i+1}/{objs_count}: {objID}')
             base_attrs = object.get("attributes") or {}
             geoms = (object.get("geometry") or [])
             if self.lod_strategy == "HIGHEST" and geoms:

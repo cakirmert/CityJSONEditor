@@ -240,8 +240,8 @@ class ImportCityObject:
         self.createMesh(self.object, self.vertices, self.objectID)
         newObject = self.createObject(self.mesh)
         # select the object
-        bpy.data.objects[self.objectID].select_set(True)
-        bpy.context.view_layer.objects.active = bpy.data.objects[self.objectID]
+        newObject.select_set(True)
+        bpy.context.view_layer.objects.active = newObject
         # create the objects materials and assign them
         self.createMaterials(newObject)
         geoms = self.object.get('geometry') or []
@@ -510,7 +510,10 @@ class ExportCityObject:
                 pass
         has_semantics = any(v is not None for v in self.semanticValues) or bool(self.semanticSurfaces)
         if self.include_semantics and self.objType != 'GenericCityObject' and has_semantics:
-            self.geometry[0].update({"semantics" : {"values" : [self.semanticValues],"surfaces" : self.semanticSurfaces}})
+            sem_values = self.semanticValues
+            if self.geometry and self.geometry[0].get("type") == "Solid":
+                sem_values = [self.semanticValues]
+            self.geometry[0].update({"semantics" : {"values" : sem_values,"surfaces" : self.semanticSurfaces}})
         
         # Only include texture if we have at least one non-null mapping (integer index)
         def has_any_int(item):

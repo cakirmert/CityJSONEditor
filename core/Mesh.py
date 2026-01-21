@@ -53,37 +53,36 @@ class Mesh:
     
     def createBlenderMesh(self):
         # vertices used for defining blender meshes
-        vertices = []
+        meshVertices = []
         # edges defined by vertex indices (not required if faces are made)
         edges = []
-        # faces defindes by vertex indides
-        faces = []
-        # only the vertices that are actually part of the mesh
-        meshVertices = []
         # new face mapping values
         newFaces = []
         
-        # vertices from cityJSON file
-        vertices = self.vertices
-        # facemapping from cityJSON file
-        faces = self.vertexMaps
+        # Mapping from global vertex coordinates to local mesh index
+        coord_to_idx = {}
         
         # only use vertices, that are part of the mesh
-        for face in faces:
+        for face in self.vertexMaps:
             # create new face array
             newFace = []
             # check vertex coordinate in face
             for value in face:
-                vertexCoords = vertices[value]
-                # if the coordinate used in the mesh already exists get its index
-                if vertexCoords in meshVertices:
-                    newFace.append(meshVertices.index(vertexCoords))
-                # if the coordinate does not jet exist add it to the mesh and get its index
+                try:
+                    vertexCoords = tuple(self.vertices[value])
+                except (IndexError, TypeError):
+                    continue
+                
+                if vertexCoords in coord_to_idx:
+                    newFace.append(coord_to_idx[vertexCoords])
                 else:
-                    meshVertices.append(vertexCoords)
-                    newFace.append(meshVertices.index(vertexCoords))
+                    new_idx = len(meshVertices)
+                    meshVertices.append(list(vertexCoords))
+                    coord_to_idx[vertexCoords] = new_idx
+                    newFace.append(new_idx)
             # add the newly mapped face to the list of faces for the mesh
-            newFaces.append(newFace)
+            if len(newFace) >= 3:
+                newFaces.append(newFace)
 
         # creating a new mesh with the name of the object
         newMesh = bpy.data.meshes.new(self.name)

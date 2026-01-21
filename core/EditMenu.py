@@ -38,10 +38,38 @@ class SetSurfaceOperator(bpy.types.Operator):
                 except Exception:
                     attr = None
             surfaces = list(obj.get("cj_semantic_surfaces", []))
+            def _is_wall_surface(surface_type):
+                return isinstance(surface_type, str) and surface_type.endswith("WallSurface")
+
+            def _find_wall_surface_index(preferred_idx=None):
+                if preferred_idx is not None and 0 <= preferred_idx < len(surfaces):
+                    surf = surfaces[preferred_idx]
+                    if isinstance(surf, dict) and _is_wall_surface(surf.get("type")):
+                        return preferred_idx
+                for idx, surf in enumerate(surfaces):
+                    if isinstance(surf, dict) and _is_wall_surface(surf.get("type")):
+                        return idx
+                return None
             # iterate faces
             for face in mesh.polygons:
                 # get faces that are selected
                 if face.select == True:
+                    old_idx = None
+                    if attr:
+                        try:
+                            old_idx = attr.data[face.index].value
+                        except Exception:
+                            old_idx = None
+                    if old_idx is None:
+                        try:
+                            old_idx = face.get("cje_semantic_index")
+                        except Exception:
+                            try:
+                                old_idx = face["cje_semantic_index"]
+                            except Exception:
+                                old_idx = None
+                    if old_idx == -1:
+                        old_idx = None
                     try:
                         material = bpy.context.object.active_material.name
                         #print("name of the surface's old material: "+ str(material))
@@ -61,9 +89,37 @@ class SetSurfaceOperator(bpy.types.Operator):
                         if isinstance(surf, dict) and surf.get("type") == self.surfaceType:
                             surface_idx = idx
                             break
+                    parent_idx = None
+                    if self.surfaceType in ("Window", "Door"):
+                        parent_idx = _find_wall_surface_index(old_idx)
                     if surface_idx is None:
                         surface_idx = len(surfaces)
-                        surfaces.append({"type": self.surfaceType})
+                        new_surface = {"type": self.surfaceType}
+                        if parent_idx is not None:
+                            new_surface["parent"] = parent_idx
+                        surfaces.append(new_surface)
+                        if parent_idx is not None:
+                            parent_surface = surfaces[parent_idx]
+                            if isinstance(parent_surface, dict):
+                                children = parent_surface.get("children")
+                                if not isinstance(children, list):
+                                    children = []
+                                    parent_surface["children"] = children
+                                if surface_idx not in children:
+                                    children.append(surface_idx)
+                    else:
+                        if parent_idx is not None:
+                            surf = surfaces[surface_idx]
+                            if isinstance(surf, dict) and "parent" not in surf:
+                                surf["parent"] = parent_idx
+                            parent_surface = surfaces[parent_idx]
+                            if isinstance(parent_surface, dict):
+                                children = parent_surface.get("children")
+                                if not isinstance(children, list):
+                                    children = []
+                                    parent_surface["children"] = children
+                                if surface_idx not in children:
+                                    children.append(surface_idx)
                     try:
                         if attr:
                             attr.data[face.index].value = surface_idx

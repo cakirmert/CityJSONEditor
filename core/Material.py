@@ -150,7 +150,9 @@ class Material:
         # the object of ID: "objectID"
         # surface/polygon of index: "surfaceIndex"
         # the objects material of index: "surfaceValue"
-        bpy.data.meshes[self.objectID].polygons[surfaceIndex].material_index = surfaceValue   
+        mesh = self.currentObject.data
+        if surfaceIndex < len(mesh.polygons):
+            mesh.polygons[surfaceIndex].material_index = surfaceValue
 
     # Methods for use in edit-mode context menu and face-normal based calculation
 

@@ -192,6 +192,86 @@ class ExportProcess:
                     # No texture nodes; skip quietly
                     continue
 
+    def _walk_indices(self, node, func):
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                if isinstance(item, list):
+                    self._walk_indices(item, func)
+                else:
+                    try:
+                        node[i] = func(item)
+                    except Exception:
+                        pass
+
+    def _update_all_boundaries(self, func):
+        cityobjects = self.jsonExport.get("CityObjects") or {}
+        for obj in cityobjects.values():
+            geoms = obj.get("geometry") or []
+            for geom in geoms:
+                boundaries = geom.get("boundaries")
+                if isinstance(boundaries, list):
+                    self._walk_indices(boundaries, func)
+
+    def _remove_duplicate_vertices(self):
+        vertices = self.jsonExport.get("vertices") or []
+        if not vertices:
+            return 0
+        index_map = [-1] * len(vertices)
+        new_vertices = []
+        seen = {}
+        for i, v in enumerate(vertices):
+            key = tuple(v)
+            existing = seen.get(key)
+            if existing is None:
+                existing = len(new_vertices)
+                seen[key] = existing
+                new_vertices.append(v)
+            index_map[i] = existing
+        self._update_all_boundaries(lambda idx: index_map[idx])
+        self.jsonExport["vertices"] = new_vertices
+        return len(vertices) - len(new_vertices)
+
+    def _remove_orphan_vertices(self):
+        vertices = self.jsonExport.get("vertices") or []
+        if not vertices:
+            return 0
+        used = {}
+        ordered = []
+
+        def collect(node):
+            if isinstance(node, list):
+                for item in node:
+                    collect(item)
+            else:
+                if not isinstance(node, int):
+                    return
+                if node < 0 or node >= len(vertices):
+                    return
+                if node not in used:
+                    used[node] = len(ordered)
+                    ordered.append(node)
+
+        cityobjects = self.jsonExport.get("CityObjects") or {}
+        for obj in cityobjects.values():
+            geoms = obj.get("geometry") or []
+            for geom in geoms:
+                boundaries = geom.get("boundaries")
+                if isinstance(boundaries, list):
+                    collect(boundaries)
+
+        if len(ordered) == len(vertices):
+            return 0
+
+        self._update_all_boundaries(lambda idx: used[idx])
+        self.jsonExport["vertices"] = [vertices[i] for i in ordered]
+        return len(vertices) - len(self.jsonExport["vertices"])
+
+    def _cleanup_vertices(self):
+        removed_dupes = self._remove_duplicate_vertices()
+        removed_orphans = self._remove_orphan_vertices()
+        if removed_dupes or removed_orphans:
+            print(f"[CityJSONEditor] Cleaned vertices: -{removed_dupes} duplicates, -{removed_orphans} orphans.")
+
     def createCityObject(self):
         baseline_cityobjects = (self.baseline_data.get("CityObjects") or {}) if self.baseline_data else {}
         baseline_vertices = (self.baseline_data.get("vertices") or []) if (self.baseline_data and self.export_changed_only) else []
@@ -375,6 +455,7 @@ class ExportProcess:
             self.getTextures()
             self.getVerticesTexture()
         self.createCityObject()
+        self._cleanup_vertices()
         self.updateMetadataExtent()
         self.applyBaselinePatch()
         self.writeData()

@@ -194,7 +194,10 @@ class ImportProcess:
 
     def execute(self):
         time_start = time.time()
-        bpy.ops.wm.console_toggle()
+        try:
+            bpy.ops.wm.console_toggle()
+        except:
+            pass
         print('##########################')
         print('### STARTING IMPORT... ###')
         print('##########################')
